@@ -1,0 +1,6 @@
+train: /home/labcv/vanh/dataset/images/train  
+val: /home/labcv/vanh/dataset/images/val      
+test: /home/labcv/vanh/dataset/images/test
+
+nc: 1  
+names: ['person']  
