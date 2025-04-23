@@ -30,7 +30,6 @@ while cap.isOpened():
     annotated_frame = results[0].plot()
 
   
-    #cv2.imshow("Detection", annotated_frame)
     out.write(annotated_frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
