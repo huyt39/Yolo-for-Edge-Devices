@@ -24,7 +24,7 @@ while cap.isOpened():
         break
 
     # Inference
-    results = model(frame)
+    results = model(frame, conf = 0.7)
 
    
     annotated_frame = results[0].plot()
