@@ -24,13 +24,12 @@ while cap.isOpened():
         break
 
     # Inference
-    results = model(frame)
+    results = model(frame, conf = 0.7)
 
    
     annotated_frame = results[0].plot()
 
   
-    #cv2.imshow("Detection", annotated_frame)
     out.write(annotated_frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
