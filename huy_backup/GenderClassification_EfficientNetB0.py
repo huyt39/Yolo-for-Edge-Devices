@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader, random_split
 from torchvision import transforms, models
-from torchvision.models import MobileNet_V2_Weights
+from torchvision.models import EfficientNet_B0_Weights
 from sklearn.metrics import accuracy_score
 import wandb
 
@@ -111,9 +111,9 @@ def GenderClassification(rois_path, annotation_path, train_transform, val_transf
     print(f"Split: train={train_size}, val={val_size}, test={test_size}")
 
     # --- Model ---
-    weights = MobileNet_V2_Weights.DEFAULT if use_pretrained else None
-    model = models.mobilenet_v2(weights=weights)
-    model.classifier[1] = nn.Linear(model.last_channel, 2)
+    weights = EfficientNet_B0_Weights.DEFAULT if use_pretrained else None
+    model = models.efficientnet_b0(weights=weights)
+    model.classifier[1] = nn.Linear(model.classifier[1].in_features, 2)
     model.to(device)
 
     # --- Training setup ---
@@ -122,7 +122,7 @@ def GenderClassification(rois_path, annotation_path, train_transform, val_transf
         "epochs": epochs,
         "batch_size": batch_size,
         "learning_rate": 0.0001,
-        "architecture": "MobileNetV2",
+        "architecture": "EfficientNet-B0",
         "pretrained": use_pretrained,
         "train_size": train_size,
         "val_size": val_size,
@@ -194,7 +194,7 @@ def GenderClassification(rois_path, annotation_path, train_transform, val_transf
         # --- Early stopping ---
         if val_accuracy > best_val_accuracy:
             best_val_accuracy = val_accuracy
-            torch.save(model.state_dict(), "best_model_mobilenet.pth")
+            torch.save(model.state_dict(), "best_model_efficientnet_b0.pth")
             print(f"  -> Best model saved (val acc: {best_val_accuracy:.4f})")
             no_improvement_epochs = 0
         else:
@@ -205,7 +205,7 @@ def GenderClassification(rois_path, annotation_path, train_transform, val_transf
             break
 
     # --- Test evaluation ---
-    model.load_state_dict(torch.load("best_model_mobilenet.pth", weights_only=True))
+    model.load_state_dict(torch.load("best_model_efficientnet_b0.pth", weights_only=True))
     model.eval()
     test_correct = 0
     test_total = 0
@@ -225,6 +225,7 @@ def GenderClassification(rois_path, annotation_path, train_transform, val_transf
 
 
 if __name__ == '__main__':
+    # EfficientNet-B0 expects 224x224 input
     train_transform = transforms.Compose([
         transforms.Resize((256, 256)),
         transforms.RandomCrop(224),

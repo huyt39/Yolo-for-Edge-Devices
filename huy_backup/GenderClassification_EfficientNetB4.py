@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader, random_split
 from torchvision import transforms, models
-from torchvision.models import MobileNet_V2_Weights
+from torchvision.models import EfficientNet_B4_Weights
 from sklearn.metrics import accuracy_score
 import wandb
 
@@ -111,9 +111,9 @@ def GenderClassification(rois_path, annotation_path, train_transform, val_transf
     print(f"Split: train={train_size}, val={val_size}, test={test_size}")
 
     # --- Model ---
-    weights = MobileNet_V2_Weights.DEFAULT if use_pretrained else None
-    model = models.mobilenet_v2(weights=weights)
-    model.classifier[1] = nn.Linear(model.last_channel, 2)
+    weights = EfficientNet_B4_Weights.DEFAULT if use_pretrained else None
+    model = models.efficientnet_b4(weights=weights)
+    model.classifier[1] = nn.Linear(model.classifier[1].in_features, 2)
     model.to(device)
 
     # --- Training setup ---
@@ -122,7 +122,7 @@ def GenderClassification(rois_path, annotation_path, train_transform, val_transf
         "epochs": epochs,
         "batch_size": batch_size,
         "learning_rate": 0.0001,
-        "architecture": "MobileNetV2",
+        "architecture": "EfficientNet-B4",
         "pretrained": use_pretrained,
         "train_size": train_size,
         "val_size": val_size,
@@ -194,7 +194,7 @@ def GenderClassification(rois_path, annotation_path, train_transform, val_transf
         # --- Early stopping ---
         if val_accuracy > best_val_accuracy:
             best_val_accuracy = val_accuracy
-            torch.save(model.state_dict(), "best_model_mobilenet.pth")
+            torch.save(model.state_dict(), "best_model_efficientnet_b4.pth")
             print(f"  -> Best model saved (val acc: {best_val_accuracy:.4f})")
             no_improvement_epochs = 0
         else:
@@ -205,7 +205,7 @@ def GenderClassification(rois_path, annotation_path, train_transform, val_transf
             break
 
     # --- Test evaluation ---
-    model.load_state_dict(torch.load("best_model_mobilenet.pth", weights_only=True))
+    model.load_state_dict(torch.load("best_model_efficientnet_b4.pth", weights_only=True))
     model.eval()
     test_correct = 0
     test_total = 0
@@ -225,9 +225,10 @@ def GenderClassification(rois_path, annotation_path, train_transform, val_transf
 
 
 if __name__ == '__main__':
+    # EfficientNet-B4 expects 380x380 input
     train_transform = transforms.Compose([
-        transforms.Resize((256, 256)),
-        transforms.RandomCrop(224),
+        transforms.Resize((420, 420)),
+        transforms.RandomCrop(380),
         transforms.RandomHorizontalFlip(),
         transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
         transforms.ToTensor(),
@@ -235,14 +236,14 @@ if __name__ == '__main__':
     ])
 
     val_transform = transforms.Compose([
-        transforms.Resize((224, 224)),
+        transforms.Resize((380, 380)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
     rois_path = "/mnt/e/workspace/Dataset/P-DESTR/rois/jpg_Extracted_PIDS"
     annotation_path = "/mnt/e/workspace/Dataset/P-DESTR/dataset/P-DESTRE/annotation"
-    batch_size = 32
+    batch_size = 16  # Smaller batch size due to larger input resolution
 
     GenderClassification(rois_path, annotation_path, train_transform, val_transform,
                          batch_size, use_pretrained=True)
