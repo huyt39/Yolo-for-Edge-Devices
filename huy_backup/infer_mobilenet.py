@@ -4,122 +4,95 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from torchvision import models, transforms
-from select_features import extract_features
+from sklearn.metrics import classification_report
+from scipy.io import loadmat
 
-# Custom dataset that reads images from subfolders and assigns gender labels from the dictionary.
-class GenderDataset(Dataset):
-	def __init__(self, data_dir, annotation_path, transform):
-		"""
-		:param data_dir: Directory containing subfolders for each identity.
-		:param annotation_path: Directory where annotation files are stored.
-		:param transform: Image transformations.
-		"""
-		self.samples = []
-		self.transform = transform
 
-		# Find annotation file corresponding to data_dir
-		folder_name = os.path.basename(data_dir)
-		annotation_file = os.path.join(annotation_path, folder_name + ".txt")
+# PA-100K attribute order (26 binary attributes; "Female" at index 0).
+PA100K_ATTRIBUTES = [
+    "Female", "AgeOver60", "Age18-60", "AgeLess18",
+    "Front", "Side", "Back",
+    "Hat", "Glasses",
+    "HandBag", "ShoulderBag", "Backpack", "HoldObjectsInFront",
+    "ShortSleeve", "LongSleeve", "UpperStride", "UpperLogo", "UpperPlaid", "UpperSplice",
+    "LowerStripe", "LowerPattern",
+    "LongCoat", "Trousers", "Shorts", "Skirt&Dress", "boots",
+]
 
-		if not os.path.exists(annotation_file):
-			raise FileNotFoundError(f"Annotation file not found: {annotation_file}")
 
-		# Extract {ID: gender} mapping from annotation file
-		selected_features = [1, 4]  # ID and Gender
-		labels_dict = extract_features([annotation_file], selected_features)
+def load_pa100k_split(annotation_mat_path: str, split: str, attribute: str = "Female") -> list:
+    """Return list of (image_filename, label) for PA-100K `split` ('train'/'val'/'test')."""
+    mat = loadmat(annotation_mat_path)
+    names = mat[f"{split}_images_name"].squeeze()
+    labels = mat[f"{split}_label"]
+    attr_idx = PA100K_ATTRIBUTES.index(attribute)
+    return [(str(name[0]), int(labels[i, attr_idx])) for i, name in enumerate(names)]
 
-		# Walk through each subfolder in data_dir.
-		for id in os.listdir(data_dir):
-			if id == "-1":
-				continue
 
-			subfolder = os.path.join(data_dir, id)
-			if os.path.isdir(subfolder):
-				# Use the subfolder name (id) to get the gender label.
-				# Make sure keys in labels_dict are of the same type as 'id' (e.g., string)
-				gender = labels_dict.get(id)
-				if (gender == 2):
-					# Optionally: skip if the id is not found in the dictionary.
-					continue
-					
-				# Loop through each image file in the subfolder.
-				for file in os.listdir(subfolder):
-					if file.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
-						img_path = os.path.join(subfolder, file)
-						self.samples.append((img_path, gender))
+class PA100KGenderDataset(Dataset):
+    def __init__(self, images_dir, annotation_mat_path, split, transform):
+        self.images_dir = images_dir
+        self.transform = transform
+        self.samples = load_pa100k_split(annotation_mat_path, split, attribute="Female")
 
-	def __getitem__(self, index):
-		path, gender = self.samples[index]
-		image = Image.open(path).convert('RGB')
-		if self.transform:
-			image = self.transform(image)
-		return image, gender
+    def __getitem__(self, index):
+        name, label = self.samples[index]
+        image = Image.open(os.path.join(self.images_dir, name)).convert("RGB")
+        if self.transform:
+            image = self.transform(image)
+        return image, label
 
-	def __len__(self):
-		return len(self.samples)
+    def __len__(self):
+        return len(self.samples)
 
-def infer_gender(data_dir, annotation_path, transform, batch_size):
-	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-	
-	# Create dataset and DataLoader.
-	image_dataset = GenderDataset(data_dir, annotation_path, transform)
-	image_loader = DataLoader(image_dataset, batch_size=batch_size, shuffle=False)
-	
-	# Load MobileNetV2 model.
-	model = models.mobilenet_v2(pretrained=False)
-	num_ftrs = model.classifier[1].in_features
-	model.classifier[1] = nn.Linear(num_ftrs, 2)  # Binary classification (Male/Female)
 
-	# Load trained weights
-	model_path = "best_model_mobilenet.pth"
-	if os.path.exists(model_path):
-		try:
-			state_dict = torch.load(model_path, map_location=device)
-			model.load_state_dict(state_dict, strict=False)
-			print("Model loaded successfully!")
-		except Exception as e:
-			print(f"Error loading model: {e}")
-	else:
-		print(f"Model file '{model_path}' not found!")
-		return
-	
-	model.to(device)
-	model.eval()
+def infer_gender(images_dir, annotation_mat_path, transform, batch_size, model_path, split="test"):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-	correct = 0
-	total = 0
+    dataset = PA100KGenderDataset(images_dir, annotation_mat_path, split, transform)
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    print(f"Inference on PA-100K {split}: {len(dataset)} samples")
 
-	# Inference loop.
-	with torch.no_grad():
-		for images, labels in image_loader:
-			images, labels = images.to(device), labels.to(device)
-			outputs = model(images)
-			# Get predicted class (0 or 1)
-			_, predicted = torch.max(outputs, 1)
-			total += labels.size(0)
-			correct += (predicted == labels).sum().item()
+    model = models.mobilenet_v2(weights=None)
+    model.classifier[1] = nn.Linear(model.last_channel, 2)
 
-	accuracy = 100 * correct / total if total > 0 else 0
-	print('Accuracy: {:.2f}%'.format(accuracy))
-	return accuracy
+    if not os.path.exists(model_path):
+        print(f"Model file '{model_path}' not found!")
+        return
+    state_dict = torch.load(model_path, map_location=device, weights_only=True)
+    model.load_state_dict(state_dict)
+    print("Model loaded successfully!")
 
-# Example usage:
+    model.to(device)
+    model.eval()
+
+    preds, true = [], []
+    with torch.no_grad():
+        for images, labels in loader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            _, predicted = torch.max(outputs, 1)
+            preds.extend(predicted.cpu().tolist())
+            true.extend(labels.cpu().tolist())
+
+    accuracy = 100.0 * sum(p == t for p, t in zip(preds, true)) / len(true)
+    print(f"Accuracy: {accuracy:.2f}%")
+    print("Classification report:")
+    print(classification_report(true, preds, target_names=["Male", "Female"], digits=4, zero_division=0))
+    return accuracy
+
+
 if __name__ == '__main__':
-	# Define your transformations (example: resize and normalization).
-	transform = transforms.Compose([
-		transforms.Resize((224, 224)),
-		transforms.ToTensor(),
-		transforms.Normalize(mean=[0.485, 0.456, 0.406],
-							 std=[0.229, 0.224, 0.225])
-	])
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
 
-	base_data_dir = "/mnt/e/workspace/Dataset/P-DESTR/rois/jpg_Extracted_PIDS"
-	annotation_path = "/mnt/e/workspace/Dataset/P-DESTR/dataset/P-DESTRE/annotation"
-	batch_size = 32
-	
-	# Iterate through all subdirectories in base_data_dir
-	for folder_name in os.listdir(base_data_dir):
-		data_dir = os.path.join(base_data_dir, folder_name)
-		if os.path.isdir(data_dir):  # Ensure it's a directory
-			print(f"Running inference on folder: {folder_name}")
-			infer_gender(data_dir, annotation_path, transform, batch_size)
+    # PA-100K layout: <root>/release_data/release_data/000001.jpg ... and <root>/annotation.mat
+    images_dir = "/mnt/e/workspace/Dataset/PA-100K/release_data/release_data"
+    annotation_mat_path = "/mnt/e/workspace/Dataset/PA-100K/annotation.mat"
+    model_path = "best_model_mobilenet.pth"
+    batch_size = 32
+
+    infer_gender(images_dir, annotation_mat_path, transform, batch_size, model_path, split="test")
